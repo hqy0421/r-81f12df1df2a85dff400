@@ -303,3 +303,27 @@ class ClickHouseDDLCompiler(compiler.DDLCompiler):
         return "ALTER TABLE %s MODIFY COMMENT ''" % (
             self.preparer.format_table(create.element)
         )
+
+    def visit_replace_partition(self, replace, **kw):
+        def quote_table(schema, name):
+            if schema:
+                return (
+                    self.preparer.quote_schema(schema)
+                    + '.'
+                    + self.preparer.quote_identifier(name)
+                )
+            return self.preparer.quote_identifier(name)
+
+        target = quote_table(replace.target_schema, replace.target_table)
+        source = quote_table(replace.source_schema, replace.source_table)
+
+        partition = self.sql_compiler.render_literal_value(
+            replace.partition_id, sqltypes.String()
+        )
+
+        return (
+            'ALTER TABLE {target} REPLACE PARTITION {partition} '
+            'FROM {source}'.format(
+                target=target, partition=partition, source=source
+            )
+        )

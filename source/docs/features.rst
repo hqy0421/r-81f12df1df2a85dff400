@@ -1041,3 +1041,84 @@ You can pass external tables to ClickHouse server with ``execution_options``
         session.query(func.sum(table.c.id)) \
             .execution_options(external_tables=[table])
             .scalar()
+
+
+Partition publication (REPLACE PARTITION)
+-----------------------------------------
+
+A monthly recalculation can produce a frozen MergeTree staging table whose
+partition has to be swapped into the production table. The
+``clickhouse_sqlalchemy.ext.partition`` module publishes a single partition
+with one native ``ALTER TABLE ... REPLACE PARTITION ... FROM ...``
+statement.
+
+The precheck is strictly read-only. It verifies that both tables live in
+the same database, use MergeTree-family engines, have identical column
+definitions, partition keys and sorting keys, and that the staging table
+contains an **active** partition with the requested id. The last check is
+mandatory because replacing from a missing source partition takes the
+matching target partition offline.
+
+    .. code-block:: python
+
+        from clickhouse_sqlalchemy.ext.partition import (
+            build_publish_plan, precheck_publish, publish_partition,
+            resume_publish, verify_publish, PublishStatus,
+        )
+
+        plan = build_publish_plan(
+            target_table='events',
+            source_table='events_staging_202601',
+            partition_id='202601',
+            database='analytics',
+        )
+
+        with engine.begin() as connection:
+            # Read-only; raises PartitionPrecheckError on mismatch.
+            report = precheck_publish(connection, plan)
+            report.raise_if_failed()
+
+            # One ALTER TABLE ... REPLACE PARTITION statement. The old
+            # partition is NOT dropped beforehand, other partitions and the
+            # staging table are never touched.
+            publish_partition(connection, plan)
+
+The plan is an immutable, serializable object (``plan.to_dict()`` /
+``PartitionPublishPlan.from_dict(...)``). ``REPLACE PARTITION`` is atomic
+and idempotent, so if the connection breaks while the statement is in
+flight the same plan can simply be retried without accumulating rows:
+
+    .. code-block:: python
+
+        from clickhouse_sqlalchemy.exceptions import (
+            PartitionPublishUnknownError,
+        )
+
+        try:
+            publish_partition(connection, plan)
+        except PartitionPublishUnknownError:
+            # Outcome unknown; plan and staging table are preserved.
+            # resume_publish() verifies first and skips the statement when
+            # the first attempt already succeeded.
+            resume_publish(connection, plan)
+
+        assert verify_publish(connection, plan) is PublishStatus.PUBLISHED
+
+The underlying DDL clause is available directly and compiles to a single
+statement:
+
+    .. code-block:: python
+
+        from clickhouse_sqlalchemy.sql.ddl import ReplacePartition
+
+        connection.execute(
+            ReplacePartition(
+                'events', 'events_staging_202601', '202601',
+                target_schema='analytics', source_schema='analytics',
+            )
+        )
+
+    .. code-block:: sql
+
+        ALTER TABLE analytics."events" REPLACE PARTITION '202601'
+        FROM analytics."events_staging_202601"

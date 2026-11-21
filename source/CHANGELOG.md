@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- MergeTree partition publication: ``clickhouse_sqlalchemy.ext.partition``
+  provides a read-only precheck (same-database MergeTree tables, matching
+  columns, partition key and sorting key, active staging partition) and a
+  single native ``ALTER TABLE ... REPLACE PARTITION ... FROM ...``
+  publication via the new ``ReplacePartition`` DDL clause. Plans are
+  immutable and serializable, and retrying the same plan after a connection
+  failure is safe and non-accumulating.
 
 ## [0.3.2] - 2024-06-12
 ### Added

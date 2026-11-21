@@ -1,9 +1,33 @@
 from sqlalchemy.sql.ddl import (
     SchemaDropper as SchemaDropperBase, DropTable as DropTableBase,
-    SchemaGenerator as SchemaGeneratorBase, _CreateDropBase
+    SchemaGenerator as SchemaGeneratorBase, _CreateDropBase,
+    ExecutableDDLElement
 )
 from sqlalchemy.sql.expression import UnaryExpression
 from sqlalchemy.sql.operators import custom_op
+
+
+class ReplacePartition(ExecutableDDLElement):
+    """Represent an ``ALTER TABLE ... REPLACE PARTITION ... FROM ...``.
+
+    Only MergeTree-family tables support partition replacement. The
+    statement atomically replaces the target partition with a copy of the
+    source partition; the source partition is left untouched and re-running
+    the same statement does not accumulate rows.
+    """
+
+    __visit_name__ = 'replace_partition'
+
+    def __init__(self, target_table, source_table, partition_id,
+                 target_schema=None, source_schema=None):
+        self.target_table = target_table
+        self.source_table = source_table
+        # Partition identifiers are rendered as string literals; ClickHouse
+        # stores every partition id (including integer partitions) as a
+        # string in ``system.parts.partition``.
+        self.partition_id = str(partition_id)
+        self.target_schema = target_schema
+        self.source_schema = source_schema
 
 
 class DropTable(DropTableBase):
